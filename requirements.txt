@@ -1,6 +1,3 @@
-aiogram>=3.0.0
-pyTelegramBotAPI
-requests
+aiogram
 python-dotenv
-rcon-python
 mcrcon
