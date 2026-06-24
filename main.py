@@ -1,5 +1,6 @@
 import asyncio
 import os
+import dotenv
 from dotenv import load_dotenv
 from aiogram import Router, Bot, F, Dispatcher
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
