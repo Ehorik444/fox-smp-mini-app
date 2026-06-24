@@ -12,7 +12,7 @@ from mcrcon import MCRcon
 # Загрузка настроек
 load_dotenv()
 
-TOKEN = "8644843971:AAHOzQ-fT8FkhJ3oshAZE61ZBVc3lgjM-ps"
+TOKEN = ""
 FORUM_CHAT_ID = os.getenv('FORUM_CHAT_ID')
 THREAD_ID = int(os.getenv('THREAD_ID', 0))
 RCON_HOST = os.getenv('RCON_HOST')
