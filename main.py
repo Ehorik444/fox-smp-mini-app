@@ -12,7 +12,7 @@ import os
 load_dotenv()
 
 # --- Загрузка настроек из .env ---
-TOKEN = os.getenv('BOT_TOKEN')
+TOKEN = " "
 FORUM_CHAT_ID = os.getenv('FORUM_CHAT_ID')
 THREAD_ID = int(os.getenv('THREAD_ID'))  # преобразуем в число
 RCON_HOST = os.getenv('RCON_HOST')
