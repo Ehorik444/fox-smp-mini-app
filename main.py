@@ -1,6 +1,5 @@
 import asyncio
 import os
-import dotenv
 from dotenv import load_dotenv
 from aiogram import Router, Bot, F, Dispatcher
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -28,12 +27,13 @@ router = Router()
 
 # Делаем RCON асинхронным через asyncio.to_thread
 def sync_add_to_whitelist(minecraft_nick):
+    from mcrcon import MCRcon
     try:
-        with Client(RCON_HOST, RCON_PORT, passwd=RCON_PASSWORD, timeout=5) as client:
-            client.run(f'whitelist add {minecraft_nick}')
+        with MCRcon(RCON_HOST, RCON_PASSWORD, port=RCON_PORT, timeout=10) as mcr:
+            mcr.command(f"whitelist add {minecraft_nick}")
         return True
     except Exception as e:
-        print(f"RCON Error: {e}")
+        print(f"MCRcon Error: {e}")
         return False
 
 async def add_to_whitelist(nick):
@@ -50,64 +50,94 @@ async def cmd_start(message: Message):
 async def process_apply(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer(
-        "Отправь заявку СТРОГО в этом формате:\n\n"
-        "Имя: Иван\nВозраст: 20\nПол: Мужской\nНик: Steve\nО себе: Играю долго, адекватный"
+        "📝 Отправь свою заявку СТРОГО в таком формате (скопируй и заполни):\n\n"
+        "Имя: Иван\n"
+        "Возраст: 20\n"
+        "Пол: Мужской\n"
+        "Ник в Minecraft: Steve\n"
+        "О себе: Играю в майнкрафт более пяти лет, адекватный и спокойный."
     )
 
 @router.message(F.text)
 async def handle_application(message: Message):
-    # Улучшенный парсинг
-    lines = message.text.split('\n')
+    # Если это сообщение в чате админов - игнорируем
+    if str(message.chat.id) == str(FORUM_CHAT_ID):
+        return
+
+    text = message.text.strip()
+    lines = text.split("\n")
+    
     if len(lines) < 5:
-        await message.reply("❌ Неверный формат. Нужно 5 строк.")
+        await message.reply("❌ Неверный формат. Нужно заполнить все 5 строк.")
         return
 
     try:
-        nick = lines[3].split(':')[1].strip()
-        about = lines[4].split(':')[1].strip()
-        
+        # Безопасное извлечение ника (4-я строка)
+        mc_nick = lines[3].split(":", 1)[1].strip()
+        about = lines[4].split(":", 1)[1].strip()
+
         if len(about) < 24:
-            await message.reply("❌ О себе должно быть > 24 символов.")
+            await message.reply("❌ Описание 'О себе' должно быть не меньше 24 символов.")
             return
             
-        # Формируем callback_data аккуратно (лимит 64 байта)
-        # Используем только ID пользователя
+        # Кнопки для админов (передаем user_id)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                # ВАЖНО: Храним ник в самом тексте кнопки или БД, если он длинный
-                InlineKeyboardButton(text="✅ Принять", callback_data=f"acc_{message.from_user.id}"),
-                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"den_{message.from_user.id}")
+                InlineKeyboardButton(text="✅ Принять", callback_data=f"accept_{message.from_user.id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"deny_{message.from_user.id}")
             ]
         ])
 
         await bot.send_message(
             chat_id=FORUM_CHAT_ID,
             message_thread_id=THREAD_ID,
-            text=f"Новая заявка!\n{message.text}\nID: {message.from_user.id}",
+            text=f"⚡️ Новая заявка!\n\n{text}\n\n👤 От: {message.from_user.mention_html()}\n🆔 ID: {message.from_user.id}",
             reply_markup=keyboard
         )
-        await message.reply("⏳ Заявка отправлена!")
+        await message.reply("✅ Твоя заявка отправлена на рассмотрение. Ожидай ответа!")
         
-    except Exception:
-        await message.reply("❌ Ошибка в формате.")
+    except Exception as e:
+        await message.reply("❌ Ошибка в формате. Проверь наличие двоеточий ':' в каждой строке.")
 
-# Для примера упростим логику получения ника (лучше использовать Redis/FSM)
-@router.callback_query(F.data.startswith('acc_'))
-async def accept_app(callback: CallbackQuery):
+# Обработка принятия
+@router.callback_query(F.data.startswith('accept_'))
+async def accept_application(callback: CallbackQuery):
     user_id = int(callback.data.split('_')[1])
-    # Извлекаем ник из текста сообщения
-    lines = callback.message.text.split('\n')
-    mc_nick = "unknown"
-    for line in lines:
-        if "Ник:" in line: mc_nick = line.split(':')[1].strip()
-
-    success = await add_to_whitelist(mc_nick)
     
+    # Достаем ник из текста заявки (он в 4-й строке)
+    lines = callback.message.text.split("\n")
+    mc_nick = ""
+    for line in lines:
+        if "Ник в Minecraft:" in line:
+            mc_nick = line.split(":", 1)[1].strip()
+            break
+
+    if not mc_nick:
+        await callback.answer("Не удалось найти ник в сообщении!", show_alert=True)
+        return
+
+    await callback.answer("⏳ Добавляю в вайтлист...")
+    success = await add_to_whitelist(mc_nick)
+
     if success:
-        await bot.send_message(user_id, f"✅ Вы добавлены! Ник: {mc_nick}")
-        await callback.message.edit_text(callback.message.text + "\n\nСТАТУС: ПРИНЯТ")
+        try:
+            await bot.send_message(user_id, f"🥳 Поздравляем!\nВаша заявка одобрена. Вы добавлены в вайтлист под ником: {mc_nick}.")
+        except Exception: pass
+        
+        await callback.message.edit_text(callback.message.text + "\n\n🟢 СТАТУС: ПРИНЯТ", reply_markup=None)
     else:
-        await callback.answer("Ошибка RCON", show_alert=True)
+        await callback.message.answer("❌ Ошибка RCON при добавлении!")
+
+# Обработка отклонения
+@router.callback_query(F.data.startswith('deny_'))
+async def deny_application(callback: CallbackQuery):
+    user_id = int(callback.data.split('_')[1])
+    try:
+        await bot.send_message(user_id, "❌ К сожалению, ваша заявка была отклонена администрацией.")
+    except Exception: pass
+    
+    await callback.message.edit_text(callback.message.text + "\n\n🔴 СТАТУС: ОТКЛОНЕН", reply_markup=None)
+    await callback.answer("Заявка отклонена")
 
 async def main():
     dp = Dispatcher(storage=MemoryStorage())
