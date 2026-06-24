@@ -1,167 +1,118 @@
-from aiogram import Router, Bot, F
+import asyncio
+import os
+from dotenv import load_dotenv
+from aiogram import Router, Bot, F, Dispatcher
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.context import FSMContext
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from rcon.source import Client
-from dotenv import load_dotenv
-import os
 
-# --- Загрузка переменных из .env ---
 load_dotenv()
 
-# --- Загрузка настроек из .env ---
-TOKEN = " "
+TOKEN = "ВАШ_ТОКЕН"
 FORUM_CHAT_ID = os.getenv('FORUM_CHAT_ID')
-THREAD_ID = int(os.getenv('THREAD_ID'))  # преобразуем в число
+THREAD_ID = int(os.getenv('THREAD_ID', 0))
 RCON_HOST = os.getenv('RCON_HOST')
-RCON_PORT = int(os.getenv('RCON_PORT'))  # преобразуем в число
+RCON_PORT = int(os.getenv('RCON_PORT', 25575))
 RCON_PASSWORD = os.getenv('RCON_PASSWORD')
 
-# --- Проверка, что все переменные загружены ---
-if not TOKEN or not FORUM_CHAT_ID or not RCON_PASSWORD:
-    raise ValueError("Не все переменные окружения установлены в .env")
-
-# --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+# Инициализация с использованием DefaultBotProperties
+bot = Bot(
+    token=TOKEN, 
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 router = Router()
 
-# --- ФУНКЦИЯ ДОБАВЛЕНИЯ В ВАЙТЛИСТ ЧЕРЕЗ RCON ---
-def add_to_whitelist(minecraft_nick):
+# Делаем RCON асинхронным через asyncio.to_thread
+def sync_add_to_whitelist(minecraft_nick):
     try:
         with Client(RCON_HOST, RCON_PORT, passwd=RCON_PASSWORD, timeout=5) as client:
-            response = client.run(f'whitelist add {minecraft_nick}')
+            client.run(f'whitelist add {minecraft_nick}')
         return True
     except Exception as e:
-        print(f"Ошибка RCON: {e}")
+        print(f"RCON Error: {e}")
         return False
 
-# --- ОБРАБОТКА КОМАНДЫ /start ---
+async def add_to_whitelist(nick):
+    return await asyncio.to_thread(sync_add_to_whitelist, nick)
+
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Подать заявку", callback_data='apply')]
+        [InlineKeyboardButton(text="📝 Подать заявку", callback_data='apply')]
     ])
     await message.answer("Привет! Нажми кнопку ниже, чтобы подать заявку.", reply_markup=keyboard)
 
-# --- ОБРАБОТКА КНОПКИ "ПОДАТЬ ЗАЯВКУ" ---
 @router.callback_query(F.data == 'apply')
-async def process_apply(callback_query: CallbackQuery):    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(
-        callback_query.from_user.id,
-        "Отправь свою заявку в формате:\n\n"
-        "Имя в Telegram: [ваше имя]\n"
-        "Возраст: [число]\n"
-        "Пол: [мужской/женский]\n"
-        "Ник в Minecraft: [ник]\n"
-        "О себе: [описание минимум 24 символа]"
+async def process_apply(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(
+        "Отправь заявку СТРОГО в этом формате:\n\n"
+        "Имя: Иван\nВозраст: 20\nПол: Мужской\nНик: Steve\nО себе: Играю долго, адекватный"
     )
 
-# --- ОБРАБОТКА ТЕКСТА ЗАЯВКИ ---
 @router.message(F.text)
 async def handle_application(message: Message):
-    text = message.text.strip()
-
-    # Парсинг заявки
-    lines = text.split("\n")
+    # Улучшенный парсинг
+    lines = message.text.split('\n')
     if len(lines) < 5:
-        await message.reply("Неверный формат заявки.")
+        await message.reply("❌ Неверный формат. Нужно 5 строк.")
         return
 
     try:
-        telegram_name = lines[0].split(": ", 1)[1]
-        age = lines[1].split(": ", 1)[1]
-        gender = lines[2].split(": ", 1)[1]
-        minecraft_nick = lines[3].split(": ", 1)[1]
-        about = lines[4].split(": ", 1)[1]
-
+        nick = lines[3].split(':')[1].strip()
+        about = lines[4].split(':')[1].strip()
+        
         if len(about) < 24:
-            await message.reply("Поле 'о себе' должно содержать не менее 24 символов.")
+            await message.reply("❌ О себе должно быть > 24 символов.")
             return
-    except IndexError:
-        await message.reply("Неверный формат заявки.")
-        return
+            
+        # Формируем callback_data аккуратно (лимит 64 байта)
+        # Используем только ID пользователя
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                # ВАЖНО: Храним ник в самом тексте кнопки или БД, если он длинный
+                InlineKeyboardButton(text="✅ Принять", callback_data=f"acc_{message.from_user.id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"den_{message.from_user.id}")
+            ]
+        ])
 
-    # Формирование текста заявки
-    app_text = f"""
-Заявка от: {message.from_user.full_name} (@{message.from_user.username or 'N/A'})
-Telegram Name: {telegram_name}
-Возраст: {age}
-Пол: {gender}
-Ник в Minecraft: {minecraft_nick}
-О себе: {about}
-"""
+        await bot.send_message(
+            chat_id=FORUM_CHAT_ID,
+            message_thread_id=THREAD_ID,
+            text=f"Новая заявка!\n{message.text}\nID: {message.from_user.id}",
+            reply_markup=keyboard
+        )
+        await message.reply("⏳ Заявка отправлена!")
+        
+    except Exception:
+        await message.reply("❌ Ошибка в формате.")
 
-    # Кнопки для админов
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Принять", callback_data=f'accept_{message.from_user.id}_{minecraft_nick}'),            InlineKeyboardButton(text="❌ Отклонить", callback_data=f'deny_{message.from_user.id}')
-        ]
-    ])
+# Для примера упростим логику получения ника (лучше использовать Redis/FSM)
+@router.callback_query(F.data.startswith('acc_'))
+async def accept_app(callback: CallbackQuery):
+    user_id = int(callback.data.split('_')[1])
+    # Извлекаем ник из текста сообщения
+    lines = callback.message.text.split('\n')
+    mc_nick = "unknown"
+    for line in lines:
+        if "Ник:" in line: mc_nick = line.split(':')[1].strip()
 
-    # Отправка заявки в форумную тему
-    await bot.send_message(
-        chat_id=FORUM_CHAT_ID,
-        text=app_text,
-        reply_markup=keyboard,
-        message_thread_id=THREAD_ID
-    )
-    await message.reply("Заявка отправлена. Ожидай решения.")
-
-# --- ОБРАБОТКА КНОПОК АДМИНА ---
-@router.callback_query(F.data.startswith('accept_'))
-async def accept_application(callback_query: CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    data = callback_query.data.split('_')
-    user_id = int(data[1])
-    mc_nick = data[2]
-
-    success = add_to_whitelist(mc_nick)
+    success = await add_to_whitelist(mc_nick)
+    
     if success:
-        await bot.send_message(user_id, f"✅ Поздравляю! Тебя добавили на сервер. Твой ник: {mc_nick}.")
-        await bot.edit_message_reply_markup(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.message_id,
-            message_thread_id=THREAD_ID,
-            reply_markup=None
-        )
+        await bot.send_message(user_id, f"✅ Вы добавлены! Ник: {mc_nick}")
+        await callback.message.edit_text(callback.message.text + "\n\nСТАТУС: ПРИНЯТ")
     else:
-        await bot.send_message(user_id, "Произошла ошибка при добавлении в вайтлист.")
-        await bot.edit_message_reply_markup(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.message_id,
-            message_thread_id=THREAD_ID,
-            reply_markup=None
-        )
+        await callback.answer("Ошибка RCON", show_alert=True)
 
-@router.callback_query(F.data.startswith('deny_'))
-async def deny_application(callback_query: CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    user_id = int(callback_query.data.split('_')[1])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Подать новую заявку", callback_data='apply')]
-    ])
-    await bot.send_message(
-        user_id,
-        "Твоя заявка была отклонена. Можешь подать новую.",        reply_markup=keyboard
-    )
-    await bot.edit_message_reply_markup(
-        chat_id=callback_query.message.chat.id,
-        message_id=callback_query.message.message_id,
-        message_thread_id=THREAD_ID,
-        reply_markup=None
-    )
-
-# --- ЗАПУСК БОТА ---
 async def main():
-    from aiogram import Dispatcher
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
-
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    import asyncio
     asyncio.run(main())
+                    
