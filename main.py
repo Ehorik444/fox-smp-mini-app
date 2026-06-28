@@ -10,6 +10,35 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from mcrcon import MCRcon  # Используем одну библиотеку
+import json
+
+@router.message(F.web_app_data)
+async def handle_webapp_data(message: Message):
+    # Парсим данные из Mini App
+    data = json.loads(message.web_app_data.data)
+    
+    nick = data['mc_nick']
+    user_id = message.from_user.id
+    
+    summary = (
+        f"📋 Новая заявка из Mini App!\n\n"
+        f"Имя: {data['name']}\n"
+        f"Возраст: {data['age']}\n"
+        f"Пол: {data['gender']}\n"
+        f"Ник MC: {nick}\n"
+        f"О себе: {data['about']}\n\n"
+        f"👤 Отправитель: {message.from_user.mention_html()}"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Принять", callback_data=f"acc_{user_id}_{nick}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"den_{user_id}")
+        ]
+    ])
+
+    await bot.send_message(FORUM_CHAT_ID, summary, message_thread_id=THREAD_ID, reply_markup=kb)
+    await message.answer("✅ Твоя заявка успешно отправлена через Mini App!")
 
 load_dotenv()
 
