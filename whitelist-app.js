@@ -16,9 +16,9 @@
     // =============================================
     const CONFIG = {
         API_URL: 'https://your-backend.com',      // <-- ЗАМЕНИТЬ
-        SERVER_IP: 'play.myserver.ru',
-        SERVER_VERSION: '1.21.x',
-        SERVER_TYPE: 'Ванильный',
+        SERVER_IP: 'fox-smp.com',
+        SERVER_VERSION: '26.1.2',
+        SERVER_TYPE: 'Smp',
     };
 
     const STEPS = [
